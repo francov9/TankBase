@@ -4,14 +4,13 @@
 
 package frc.robot;
 
-import frc.robot.Constants.OperatorConstants;
-import frc.robot.commands.Autos;
-import frc.robot.commands.ExampleCommand;
-import frc.robot.subsystems.ExampleSubsystem;
-import frc.robot.subsystems.TankBase;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
+import frc.robot.Constants.OperatorConstants;
+import frc.robot.commands.Autos;
+import frc.robot.subsystems.ExampleSubsystem;
+import frc.robot.subsystems.TankBase;
 
 /**
  * This class is where the bulk of the robot should be declared. Since Command-based is a
@@ -43,12 +42,15 @@ public class RobotContainer {
    * PS4} controllers or {@link edu.wpi.first.wpilibj2.command.button.CommandJoystick Flight
    * joysticks}.
    */
-
   private void configureBindings() {
-    m_TankBase.setDefaultCommand(m_TankBase.driveCommand(
-      () -> m_driverController.getLeftY(), //speed [-1 ,1]
-      () -> m_driverController.getRightX(), //turn [-1, 1]
-            true)); 
+    m_driverController
+        .leftBumper()
+        .whileTrue(
+            m_TankBase.driveCommand(
+                () -> m_driverController.getLeftY() * 0.1,
+                () -> m_driverController.getRightX() * 0.15));
+
+    m_driverController.y().whileTrue(m_TankBase.resetPoseCommand());
   }
 
   /**
