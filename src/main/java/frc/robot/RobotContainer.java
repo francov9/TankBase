@@ -47,8 +47,8 @@ public class RobotContainer {
         .leftBumper()
         .whileTrue(
             m_TankBase.driveCommand(
-                () -> m_driverController.getLeftY() * 0.1,
-                () -> m_driverController.getRightX() * 0.15));
+                () -> m_driverController.getLeftY(),
+                () -> m_driverController.getRightX()));
 
     m_driverController.y().whileTrue(m_TankBase.resetPoseCommand());
   }

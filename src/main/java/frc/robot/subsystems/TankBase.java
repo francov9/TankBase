@@ -6,23 +6,36 @@ import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.configs.Slot0Configs;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.hardware.TalonFX;
+import com.ctre.phoenix6.signals.NeutralModeValue;
 import com.ctre.phoenix6.sim.TalonFXSimState;
+import com.ctre.phoenix.motorcontrol.*;
+
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
+import edu.wpi.first.math.kinematics.DifferentialDriveKinematics;
 import edu.wpi.first.math.kinematics.DifferentialDriveOdometry;
+import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.math.system.plant.LinearSystemId;
 import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.AnalogGyro;
 import edu.wpi.first.wpilibj.RobotController;
+import edu.wpi.first.wpilibj.drive.DifferentialDrive;
 import edu.wpi.first.wpilibj.simulation.AnalogGyroSim;
 import edu.wpi.first.wpilibj.simulation.DCMotorSim;
 import edu.wpi.first.wpilibj.simulation.DifferentialDrivetrainSim;
+import edu.wpi.first.wpilibj.simulation.EncoderSim;
 import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
-// import edu.wpi.first.math.kinematics.DifferentialDriveOdometry;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import frc.robot.Constants;
+
 import java.util.function.DoubleSupplier;
+
+// Gear Ratio: 8.3:1, Track width, 17 inches, 2.85 inches diameter
+// I'm so tiredness
 
 public class TankBase extends SubsystemBase {
   private final CANBus rio = new CANBus("rio");
@@ -32,17 +45,21 @@ public class TankBase extends SubsystemBase {
   private AnalogGyro m_gyro = new AnalogGyro(1);
   private AnalogGyroSim m_gyroSim = new AnalogGyroSim(m_gyro);
 
-  static final double KvLinear = 1.98;
-  static final double KaLinear = 0.2;
-  static final double KvAngular = 1.5;
-  static final double KaAngular = 0.3;
+  static final double KvLinear = 1;
+  static final double KaLinear = 0.1;
+  static final double KvAngular = 0.7;
+  static final double KaAngular = 0.15;
 
   private DifferentialDriveOdometry m_odometry =
       new DifferentialDriveOdometry(
           m_gyro.getRotation2d(),
-          lMotor.getPosition().getValueAsDouble(),
-          rMotor.getPosition().getValueAsDouble());
+          lMotor.getPosition().getValueAsDouble() * (2*Math.PI*Constants.kWheelRadius),
+          rMotor.getPosition().getValueAsDouble() * (2*Math.PI*Units.inchesToMeters(2.8)),
+          new Pose2d(5.0, 13.5, new Rotation2d()));
+  
   private Field2d m_field = new Field2d();
+
+  private DifferentialDriveKinematics m_kinematics = new DifferentialDriveKinematics(Constants.kTrackWidth);
 
   private final DCMotorSim lMotorSim =
       new DCMotorSim(
@@ -56,15 +73,14 @@ public class TankBase extends SubsystemBase {
   DifferentialDrivetrainSim drivetrainSim =
       new DifferentialDrivetrainSim(
           LinearSystemId.identifyDrivetrainSystem(KvLinear, KaLinear, KvAngular, KaAngular),
-          DCMotor.getKrakenX60(1), // motor types
-          1, // gear ratio 5:1
-          Units.inchesToMeters(15), // track width
-          Units.inchesToMeters(2.8), // wheel radius
+          DCMotor.getKrakenX60(1),
+          Constants.kWheelGearRatio, 
+          Constants.kTrackWidth,
+          Constants.kWheelRadius,
           null);
 
   public TankBase() {
-    m_odometry.resetPose(new Pose2d());
-    m_gyroSim.setAngle(0);
+    resetPose();
     var slot0Configs = new Slot0Configs();
     TalonFXConfiguration config = new TalonFXConfiguration();
     slot0Configs.kP = 4;
@@ -73,14 +89,20 @@ public class TankBase extends SubsystemBase {
     slot0Configs.kS = 0.3;
     rMotor.getConfigurator().apply(config.withSlot0(slot0Configs));
     lMotor.getConfigurator().apply(config.withSlot0(slot0Configs));
-
+    lMotor.setNeutralMode(NeutralModeValue.Brake);
+    rMotor.setNeutralMode(NeutralModeValue.Brake);
     SmartDashboard.putData("Field", m_field);
   }
 
   private void drive(DoubleSupplier speed, DoubleSupplier turn) {
-    System.out.println("Speed: " + speed.getAsDouble() + " Turn: " + turn.getAsDouble());
-    lMotor.set((-speed.getAsDouble() + turn.getAsDouble()));
-    rMotor.set((turn.getAsDouble() + speed.getAsDouble()));
+    DifferentialDriveWheelSpeeds wheelSpeeds = m_kinematics.toWheelSpeeds(
+      new ChassisSpeeds(
+      deadband(speed.getAsDouble()),
+      0, 
+      Units.degreesToRadians(deadband(turn.getAsDouble())*180))
+    );
+    lMotor.set(wheelSpeeds.leftMetersPerSecond);
+    rMotor.set(wheelSpeeds.rightMetersPerSecond);
   }
 
   private void stop() {
@@ -91,9 +113,15 @@ public class TankBase extends SubsystemBase {
   private void resetPose() {
     lMotor.setPosition(0);
     rMotor.setPosition(0);
+    m_gyroSim.setAngle(0);
     m_odometry.resetPose(new Pose2d());
-    m_field.setRobotPose(m_odometry.getPoseMeters());
+    m_field.setRobotPose(
+      m_odometry.getPoseMeters().getMeasureX(), 
+      m_odometry.getPoseMeters().getMeasureY(), 
+      m_odometry.getPoseMeters().getRotation());
   }
+
+  private double deadband(double value){return Math.abs(value) > 0.2 ? value : 0;}
 
   public Command driveCommand(DoubleSupplier speed, DoubleSupplier turn) {
     return runEnd(() -> drive(speed, turn), () -> stop());
@@ -106,9 +134,12 @@ public class TankBase extends SubsystemBase {
   public void periodic() {
     m_odometry.update(
         m_gyro.getRotation2d(),
-        lMotor.getPosition().getValueAsDouble(),
-        rMotor.getPosition().getValueAsDouble());
-    m_field.setRobotPose(m_odometry.getPoseMeters());
+          lMotor.getPosition().getValueAsDouble() * (2*Math.PI*Constants.kWheelRadius),
+          rMotor.getPosition().getValueAsDouble() * (2*Math.PI*Constants.kWheelRadius));
+    m_field.setRobotPose(
+      m_odometry.getPoseMeters().getMeasureX(), 
+      m_odometry.getPoseMeters().getMeasureY(), 
+      m_odometry.getPoseMeters().getRotation());
   }
 
   public void simulationInit() {
@@ -142,8 +173,6 @@ public class TankBase extends SubsystemBase {
         lMotorSim.getInputVoltage() * lMotor.get(), rMotorSim.getInputVoltage() * rMotor.get());
     drivetrainSim.update(0.02);
     m_gyroSim.setAngle(
-        -drivetrainSim
-            .getHeading()
-            .getDegrees()); // heading is negative bc hover over getHeading man
+        -drivetrainSim.getHeading().getDegrees()); // heading is negative bc hover over getHeading man
   }
 }
