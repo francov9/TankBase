@@ -19,6 +19,7 @@ import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.math.system.plant.LinearSystemId;
 import edu.wpi.first.math.util.Units;
+import edu.wpi.first.util.sendable.Sendable;
 import edu.wpi.first.wpilibj.AnalogGyro;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
@@ -54,21 +55,21 @@ public class TankBase extends SubsystemBase {
       new DifferentialDriveOdometry(
           m_gyro.getRotation2d(),
           lMotor.getPosition().getValueAsDouble() * (2*Math.PI*Constants.kWheelRadius),
-          rMotor.getPosition().getValueAsDouble() * (2*Math.PI*Units.inchesToMeters(2.8)),
-          new Pose2d(5.0, 13.5, new Rotation2d()));
+          rMotor.getPosition().getValueAsDouble() * (2*Math.PI*Constants.kWheelRadius),
+          new Pose2d(0,0, new Rotation2d()));
   
   private Field2d m_field = new Field2d();
 
   private DifferentialDriveKinematics m_kinematics = new DifferentialDriveKinematics(Constants.kTrackWidth);
 
-  private final DCMotorSim lMotorSim =
-      new DCMotorSim(
-          LinearSystemId.createDCMotorSystem(DCMotor.getKrakenX60(1), 0.001, 1), // 😊
-          DCMotor.getKrakenX60(1));
-  private final DCMotorSim rMotorSim =
-      new DCMotorSim(
-          LinearSystemId.createDCMotorSystem(DCMotor.getKrakenX60(1), 0.001, 1),
-          DCMotor.getKrakenX60(1));
+  // private final DCMotorSim lMotorSim =
+  //     new DCMotorSim(
+  //         LinearSystemId.createDCMotorSystem(DCMotor.getKrakenX60(1), 0.001, 1), // 😊
+  //         DCMotor.getKrakenX60(1));
+  // private final DCMotorSim rMotorSim =
+  //     new DCMotorSim(
+  //         LinearSystemId.createDCMotorSystem(DCMotor.getKrakenX60(1), 0.001, 1),
+  //         DCMotor.getKrakenX60(1));
 
   DifferentialDrivetrainSim drivetrainSim =
       new DifferentialDrivetrainSim(
@@ -94,16 +95,22 @@ public class TankBase extends SubsystemBase {
     SmartDashboard.putData("Field", m_field);
   }
 
-  private void drive(DoubleSupplier speed, DoubleSupplier turn) {
+private void drive(DoubleSupplier speed, DoubleSupplier turn) {
+    // Max free speed for Kraken X60 with 8.3:1 and 2.85" wheels
+    // v = (free_rpm / gear_ratio) * 2π * radius
+    // ≈ (6000 / 8.3) * 2π * 0.0362 ≈ 1.64 m/s (conservative)
+    final double kMaxSpeedMetersPerSecond = 1.64;
+
     DifferentialDriveWheelSpeeds wheelSpeeds = m_kinematics.toWheelSpeeds(
-      new ChassisSpeeds(
-      deadband(speed.getAsDouble()),
-      0, 
-      Units.degreesToRadians(deadband(turn.getAsDouble())*180))
+        new ChassisSpeeds(
+            deadband(speed.getAsDouble()),
+            0,
+            Units.degreesToRadians(deadband(turn.getAsDouble()) * 180))
     );
-    lMotor.set(wheelSpeeds.leftMetersPerSecond);
-    rMotor.set(wheelSpeeds.rightMetersPerSecond);
-  }
+    System.out.println("left: " + wheelSpeeds.leftMetersPerSecond + " right: " + wheelSpeeds.rightMetersPerSecond);
+    lMotor.set(-wheelSpeeds.leftMetersPerSecond / kMaxSpeedMetersPerSecond);
+    rMotor.set(-wheelSpeeds.rightMetersPerSecond / kMaxSpeedMetersPerSecond);
+}
 
   private void stop() {
     lMotor.set(0);
@@ -149,30 +156,64 @@ public class TankBase extends SubsystemBase {
     RtalonFXSim.setMotorType(TalonFXSimState.MotorType.KrakenX60);
   }
 
-  @Override
-  public void simulationPeriodic() {
-    super.simulationPeriodic();
+    @Override
+    public void simulationPeriodic() {
+      var LtalonFXSim = lMotor.getSimState();
+      LtalonFXSim.setSupplyVoltage(RobotController.getBatteryVoltage());
 
-    var LtalonFXSim = lMotor.getSimState();
-    LtalonFXSim.setSupplyVoltage(RobotController.getBatteryVoltage());
-    var LmotorVoltage = LtalonFXSim.getMotorVoltageMeasure();
-    lMotorSim.setInputVoltage(LmotorVoltage.in(Volts)); // assume 20 ms loop time
-    LtalonFXSim.setRawRotorPosition(lMotorSim.getAngularPosition());
-    LtalonFXSim.setRotorVelocity(lMotorSim.getAngularVelocity());
-    lMotorSim.update(0.020);
+      var RtalonFXSim = rMotor.getSimState();
+      RtalonFXSim.setSupplyVoltage(RobotController.getBatteryVoltage());
+      System.out.println("voltage l " + LtalonFXSim.getMotorVoltageMeasure().in(Volts) * lMotor.get() + " voltage r: " + RtalonFXSim.getMotorVoltageMeasure().in(Volts) * rMotor.get());
+      // Feed TalonFX voltages directly into the drivetrain sim
+      drivetrainSim.setInputs(
+          LtalonFXSim.getMotorVoltageMeasure().in(Volts) * lMotor.get(),
+          RtalonFXSim.getMotorVoltageMeasure().in(Volts) * rMotor.get());
+      drivetrainSim.update(0.020);
 
-    var RtalonFXSim = rMotor.getSimState();
-    RtalonFXSim.setSupplyVoltage(RobotController.getBatteryVoltage());
-    var RmotorVoltage = RtalonFXSim.getMotorVoltageMeasure();
-    rMotorSim.setInputVoltage(RmotorVoltage.in(Volts));
-    RtalonFXSim.setRawRotorPosition(rMotorSim.getAngularPosition());
-    RtalonFXSim.setRotorVelocity(rMotorSim.getAngularVelocity());
-    rMotorSim.update(0.020); // assume 20 ms loop time
+      // Write drivetrain sim results back to TalonFX sim state
+      // Divide by gear ratio: drivetrainSim gives wheel-shaft positions,
+      // but TalonFX reports rotor rotations
+      LtalonFXSim.setRawRotorPosition(
+          drivetrainSim.getLeftPositionMeters() / (2 * Math.PI * Constants.kWheelRadius)
+          * Constants.kWheelGearRatio);
+      LtalonFXSim.setRotorVelocity(
+          drivetrainSim.getLeftVelocityMetersPerSecond() / (2 * Math.PI * Constants.kWheelRadius)
+          * Constants.kWheelGearRatio);
 
-    drivetrainSim.setInputs(
-        lMotorSim.getInputVoltage() * lMotor.get(), rMotorSim.getInputVoltage() * rMotor.get());
-    drivetrainSim.update(0.02);
-    m_gyroSim.setAngle(
-        -drivetrainSim.getHeading().getDegrees()); // heading is negative bc hover over getHeading man
-  }
+      RtalonFXSim.setRawRotorPosition(
+          drivetrainSim.getRightPositionMeters() / (2 * Math.PI * Constants.kWheelRadius)
+          * Constants.kWheelGearRatio);
+      RtalonFXSim.setRotorVelocity(
+          drivetrainSim.getRightVelocityMetersPerSecond() / (2 * Math.PI * Constants.kWheelRadius)
+          * Constants.kWheelGearRatio);
+
+      m_gyroSim.setAngle(-drivetrainSim.getHeading().getDegrees());
+
+  // @Override
+  // public void simulationPeriodic() {
+  //   super.simulationPeriodic();
+
+  //   var LtalonFXSim = lMotor.getSimState();
+  //   LtalonFXSim.setSupplyVoltage(RobotController.getBatteryVoltage());
+  //   var LmotorVoltage = LtalonFXSim.getMotorVoltageMeasure();
+  //   lMotorSim.setInputVoltage(LmotorVoltage.in(Volts)); // assume 20 ms loop time
+  //   LtalonFXSim.setRawRotorPosition(lMotorSim.getAngularPosition());
+  //   LtalonFXSim.setRotorVelocity(lMotorSim.getAngularVelocity());
+  //   lMotorSim.update(0.020);
+
+  //   var RtalonFXSim = rMotor.getSimState();
+  //   RtalonFXSim.setSupplyVoltage(RobotController.getBatteryVoltage());
+  //   var RmotorVoltage = RtalonFXSim.getMotorVoltageMeasure();
+  //   rMotorSim.setInputVoltage(RmotorVoltage.in(Volts));
+  //   RtalonFXSim.setRawRotorPosition(rMotorSim.getAngularPosition());
+  //   RtalonFXSim.setRotorVelocity(rMotorSim.getAngularVelocity());
+  //   rMotorSim.update(0.020); // assume 20 ms loop time
+
+  //   drivetrainSim.setInputs(
+  //     lMotorSim.getInputVoltage(),
+  //     rMotorSim.getInputVoltage());
+  //   drivetrainSim.update(0.02);
+  //   m_gyroSim.setAngle(
+  //       -drivetrainSim.getHeading().getDegrees()); // heading is negative bc hover over getHeading man
+    }
 }

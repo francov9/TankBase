@@ -4,6 +4,7 @@
 
 package frc.robot;
 
+import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
@@ -27,6 +28,8 @@ public class RobotContainer {
   private final CommandXboxController m_driverController =
       new CommandXboxController(OperatorConstants.kDriverControllerPort);
 
+  private final CommandXboxController k_controller = new CommandXboxController(0);
+
   /** The container for the robot. Contains subsystems, OI devices, and commands. */
   public RobotContainer() {
     // Configure the trigger bindings
@@ -43,14 +46,14 @@ public class RobotContainer {
    * joysticks}.
    */
   private void configureBindings() {
-    m_driverController
+    k_controller
         .leftBumper()
         .whileTrue(
             m_TankBase.driveCommand(
                 () -> m_driverController.getLeftY(),
                 () -> m_driverController.getRightX()));
 
-    m_driverController.y().whileTrue(m_TankBase.resetPoseCommand());
+    k_controller.y().whileTrue(m_TankBase.resetPoseCommand());
   }
 
   /**
